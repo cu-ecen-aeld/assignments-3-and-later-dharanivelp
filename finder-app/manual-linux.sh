@@ -86,7 +86,8 @@ ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
 echo "resolving busybox dependencies"
-SYSROOT=/usr/aarch64-linux-gnu
+aarch64-none-linux-gnu-gcc -print-sysroot -v
+SYSROOT=/usr/aarch64-none-linux-gnu
 
 dep1=$(find $SYSROOT -name "libm.so.6")
 dep2=$(find $SYSROOT -name "libresolv.so.2")
