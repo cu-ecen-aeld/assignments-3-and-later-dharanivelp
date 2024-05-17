@@ -96,8 +96,8 @@ echo "  ${dep1}"
 echo "  ${dep2}"
 echo "  ${dep3}"
 echo "  ${dep4}"
-cp ${dep1} ${dep2} ${dep3} ${OUTDIR}/rootfs/lib
-cp ${dep4} ${OUTDIR}/rootfs/lib64
+cp ${dep1} ${dep2} ${dep3} ${OUTDIR}/rootfs/lib64
+cp ${dep4} ${OUTDIR}/rootfs/lib
 
 # TODO: Make device nodes
 cd $OUTDIR/rootfs
