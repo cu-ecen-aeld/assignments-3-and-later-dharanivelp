@@ -89,15 +89,20 @@ echo "resolving busybox dependencies"
 aarch64-none-linux-gnu-gcc -print-sysroot -v
 SYSROOT=/usr/aarch64-none-linux-gnu
 
-dep1=$(find $SYSROOT -name "libm.so.6")
-dep2=$(find $SYSROOT -name "libresolv.so.2")
-dep3=$(find $SYSROOT -name "libc.so.6")
-dep4=$(find $SYSROOT -name "ld-linux-aarch64.so.1")
-echo "dependencies are"
-echo "  ${dep1}"
-echo "  ${dep2}"
-echo "  ${dep3}"
-echo "  ${dep4}"
+find $SYSROOT -name "libm.so.6"
+find $SYSROOT -name "libresolv.so.2"
+find $SYSROOT -name "libc.so.6"
+find $SYSROOT -name "ld-linux-aarch64.so.1"
+
+#dep1=$(find $SYSROOT -name "libm.so.6")
+#dep2=$(find $SYSROOT -name "libresolv.so.2")
+#dep3=$(find $SYSROOT -name "libc.so.6")
+#dep4=$(find $SYSROOT -name "ld-linux-aarch64.so.1")
+#echo "dependencies are"
+#echo "  ${dep1}"
+#echo "  ${dep2}"
+#echo "  ${dep3}"
+#echo "  ${dep4}"
 
 cp ${dep1} ${dep2} ${dep3} ${dep4} ${OUTDIR}/rootfs/lib
 
