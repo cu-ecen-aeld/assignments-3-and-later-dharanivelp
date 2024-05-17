@@ -56,7 +56,7 @@ fi
 echo "creating rootfs"
 cd "$OUTDIR"
 mkdir rootfs && cd rootfs
-mkdir -p usr/bin usr/sbin usr/lib lib bin sbin proc sys etc home/root dev net var/log
+mkdir -p usr/bin usr/sbin usr/lib lib lib64 bin sbin proc sys etc home/root dev net var/log
 
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
@@ -96,8 +96,8 @@ echo "  ${dep1}"
 echo "  ${dep2}"
 echo "  ${dep3}"
 echo "  ${dep4}"
-
-cp ${dep1} ${dep2} ${dep3} ${dep4} ${OUTDIR}/rootfs/lib
+cp ${dep1} ${dep2} ${dep3} ${OUTDIR}/rootfs/lib
+cp ${dep4} ${OUTDIR}/rootfs/lib64
 
 # TODO: Make device nodes
 cd $OUTDIR/rootfs
