@@ -1,0 +1,16 @@
+case "$1" in
+	start)
+		echo "Starting aesdsocket daemon"
+		start-stop-daemon -S -n aesdsocket -a /usr/bin/aesdsocket -- -d
+		;;
+	stop)
+		echo "Stopping aesdsocket daemon"
+		start-stop-daemon -K -n asedsocket
+        pkill -f --signal SIGTERM aesdsocket
+		;;
+	*)
+		echo "Usage: aesdsocket-start-stop {start|stop}"
+		exit 1
+esac 
+
+exit 0
