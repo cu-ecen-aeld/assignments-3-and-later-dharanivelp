@@ -12,15 +12,29 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <pthread.h>
 
 #define BUFFER_LEN 256000
 #define PORT_NUM 9000
 #define FILE_PATH "/var/tmp/aesdsocketdata"
+#define TIMER_INTERVAL_SEC 10
+#define TIME_BUFF_SIZE 256
+
+typedef struct thread_list_t
+{
+    pthread_t thread;
+    struct thread_list_t *next;
+} thread_list_t;
+
+pthread_mutex_t mutex;
 
 struct sockaddr_in server_addr;
-int sockfd, filefd, client_addr_len;
+int sockfd, client_addr_len;
 pid_t pid;
 bool exitflag = false;
+char client_ip[INET_ADDRSTRLEN];
+thread_list_t *thread_list;
+pthread_t timer_thread;
 
 void exit_func()
 {
@@ -30,7 +44,16 @@ void exit_func()
         exitflag = true;
         shutdown(sockfd, SHUT_RDWR);
         close(sockfd);
-        close(filefd);
+
+        while(thread_list != NULL)
+        {
+            thread_list_t *tmp = thread_list;
+            thread_list = thread_list->next;
+            pthread_join(tmp->thread,NULL);
+            free(tmp);
+        }
+        pthread_join(timer_thread,NULL);
+        pthread_mutex_destroy(&mutex);
     }
 }
 
@@ -42,15 +65,122 @@ void handle_signal(int signal)
     }
 }
 
+thread_list_t *thread_insert(thread_list_t *thread_list, pthread_t thread)
+{
+    thread_list_t *new_node = (thread_list_t*)malloc(sizeof(thread_list_t));
+    thread_list_t *tmp = thread_list;
+    new_node->thread = thread;
+    new_node->next = NULL;
+    if(new_node == NULL)
+    {
+        return thread_list;
+    }
+    if(thread_list == NULL)
+    {
+        return new_node;
+    }
+    while(tmp->next != NULL)
+    {
+        tmp = tmp->next;
+    }
+    tmp->next = new_node;
+    return thread_list;
+}
+
+void *timestamp()
+{
+    time_t start_time = time(NULL);
+    while (!exitflag)
+    {
+        usleep(100);
+        time_t current_time = time(NULL);
+        if (difftime(current_time, start_time) < TIMER_INTERVAL_SEC)
+        {
+            continue;
+        }
+        start_time = current_time;
+        struct tm *tmp = localtime(&current_time);
+        char buff[TIME_BUFF_SIZE];
+        strftime(buff, TIME_BUFF_SIZE, "timestamp: %Y, %m, %d, %H, %M, %S\n", tmp);
+        pthread_mutex_lock(&mutex);
+        int filefd = open(FILE_PATH, O_RDWR|O_APPEND, S_IRUSR|S_IWUSR);
+        if(filefd == -1)
+        {
+            syslog(LOG_ERR, "Failed to open %s", FILE_PATH);
+            pthread_mutex_unlock(&mutex);
+            exit_func();
+        }
+        write(filefd, buff, strlen(buff));
+        close(filefd);
+        pthread_mutex_unlock(&mutex);
+    }
+}
+
+void *data_thread(void *clientfd)
+{
+    pthread_mutex_lock(&mutex);
+    ssize_t bytes_transferred = 0;
+    int *tmp = clientfd;
+    int client_sockfd = *tmp;
+    char *buffer = (char *)malloc(BUFFER_LEN * sizeof(char));
+    if(buffer == NULL)
+    {
+        exit_func();
+    }
+    bytes_transferred = recv(client_sockfd, buffer, BUFFER_LEN, 0);
+    if(bytes_transferred == -1)
+    {
+        syslog(LOG_ERR, "recv failed");
+        pthread_mutex_unlock(&mutex);
+        exit_func();
+    }
+    if(bytes_transferred == 0)
+    {
+        pthread_mutex_unlock(&mutex);
+        pthread_exit(NULL);
+    }
+    int filefd = open(FILE_PATH, O_RDWR|O_APPEND, S_IRUSR|S_IWUSR);
+    if(filefd == -1)
+    {
+        syslog(LOG_ERR, "Failed to open %s", FILE_PATH);
+        pthread_mutex_unlock(&mutex);
+        exit_func();
+    }
+    write(filefd, buffer, bytes_transferred);
+    struct stat sb;
+    fstat(filefd, &sb);
+    char *filemap = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, filefd, 0);
+    if(filemap == NULL)
+    {
+        syslog(LOG_ERR, "mmap error");
+        pthread_mutex_unlock(&mutex);
+        exit_func();
+    }
+    bytes_transferred = send(client_sockfd, filemap, sb.st_size, 0);
+    if(bytes_transferred == -1)
+    {
+        syslog(LOG_ERR, "failed to send data");
+        pthread_mutex_unlock(&mutex);
+        exit_func();
+    }
+    munmap(filemap, sb.st_size);
+    shutdown(client_sockfd, SHUT_RDWR);
+    close(client_sockfd);
+    close(filefd);
+    syslog(LOG_INFO, "Closed connection from %s", client_ip);
+    pthread_mutex_unlock(&mutex);
+    free(tmp);
+    free(buffer);
+    pthread_exit(NULL);
+}
+
 //handle data receiving and sending;
 void *data_handle_func()
 {
     struct sockaddr_in client_addr;
-    struct stat sb;
-    int filefd, client_sockfd, client_addr_len;
-    ssize_t bytes_transferred;
-    char *buffer;
-    char client_ip[INET_ADDRSTRLEN];
+    int client_addr_len = 0;
+    int *client_sockfd = NULL;
+    int filefd = 0;
     // register signal handler
     if(signal(SIGINT, handle_signal) == SIG_ERR || signal(SIGTERM, handle_signal) == SIG_ERR)
     {
@@ -64,57 +194,34 @@ void *data_handle_func()
         syslog(LOG_ERR, "Failed to open %s", FILE_PATH);
         exit_func();
     }
+    close(filefd);
 
-    buffer = (char *)malloc(BUFFER_LEN * sizeof(char));
-    if(buffer == NULL)
-    {
-        exit_func();
-    }
+    pthread_mutex_init(&mutex, NULL);
+    pthread_create(&timer_thread, NULL, timestamp, NULL);
     while(!exitflag)
     {
-        client_sockfd = accept(sockfd, (struct sockaddr *)&client_addr, &client_addr_len);
-        if(client_sockfd == -1)
+        int client_addr_len = 0;
+        client_sockfd = NULL;
+        client_sockfd = (int*)malloc(sizeof(int));
+        *client_sockfd = accept(sockfd, (struct sockaddr *)&client_addr, &client_addr_len);
+        if(*client_sockfd == -1)
         {
             exit_func();
         }
+        if(*client_sockfd == 0)
+        {
+            continue;
+        }
+        pthread_mutex_lock(&mutex);
         inet_ntop(AF_INET, &client_addr, client_ip, INET_ADDRSTRLEN);
         syslog(LOG_INFO, "Accepted connection from %s", client_ip);
-        if(client_sockfd == 0)
-        {
-            continue;
-        }
+        pthread_mutex_unlock(&mutex);
 
-        bytes_transferred = recv(client_sockfd, buffer, BUFFER_LEN, 0);
-        if(bytes_transferred == -1)
-        {
-            syslog(LOG_ERR, "recv failed");
-            exit_func();
-        }
-        if(bytes_transferred == 0)
-        {
-            continue;
-        }
+        pthread_t thread;
+        pthread_create(&thread, NULL, data_thread, (void*)client_sockfd);
+        thread_list = thread_insert(thread_list, thread);
 
-        write(filefd, buffer, bytes_transferred);
-        fstat(filefd, &sb);
-        char *filemap = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, filefd, 0);
-        if(filemap == NULL)
-        {
-            syslog(LOG_ERR, "mmap error");
-            exit_func();
-        }
-        bytes_transferred = send(client_sockfd, filemap, sb.st_size, 0);
-        if(bytes_transferred == -1)
-        {
-            syslog(LOG_ERR, "failed to send data");
-            exit_func();
-        }
-        munmap(filemap, sb.st_size);
-        shutdown(client_sockfd, SHUT_RDWR);
-        close(client_sockfd);
-        syslog(LOG_INFO, "Closed connection from %s", client_ip);
    }
-   free(buffer);
 }
 
 
